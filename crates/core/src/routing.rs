@@ -82,6 +82,7 @@ mod tests {
             end_time: "2026-07-20T16:00:00Z".parse().unwrap(),
             attendee_ids: serde_json::to_string(attendees).unwrap(),
             template_path: None,
+            carried_ids: "[]".into(),
             status: "scheduled".into(),
         }
     }

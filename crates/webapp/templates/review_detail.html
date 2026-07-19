@@ -54,7 +54,7 @@
         <td>
           <select name="item.{{ it.index }}.kind">
             {% for k in kinds %}
-            <option value="{{ k }}" {% if it.kind == k %}selected{% endif %}>{{ k }}</option>
+            <option value="{{ k }}" {% if it.kind.as_str() == k.as_str() %}selected{% endif %}>{{ k }}</option>
             {% endfor %}
           </select>
         </td>
