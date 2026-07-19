@@ -34,18 +34,15 @@
             sqlx-cli
             sqlite
             rclone
-            dejavu_fonts
-            (python3.withPackages (
-              ps: with ps; [
-                # supernotelib pulled from PyPI via renderer.nix at build time;
-                # for dev, `pip install supernotelib` into this interpreter's venv
-                # or use `nix build .#supernote-renderer`.
-                pillow
-                numpy
-              ]
-            ))
+            liberation_ttf
+            # The packaged renderer puts `supernote-render` on PATH with
+            # supernotelib bundled.
+            (pkgs.callPackage ./nix/renderer.nix { })
           ];
-          env.SUPERNOTE_FONT_DIR = "${pkgs.dejavu_fonts}/share/fonts/truetype";
+          env = {
+            SUPERNOTE_FONT_DIR = "${pkgs.liberation_ttf}/share/fonts/truetype";
+            SUPERNOTE_FONT_NAME = "LiberationSans";
+          };
         };
       });
     };
