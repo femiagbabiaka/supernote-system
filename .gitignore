@@ -1,0 +1,8 @@
+/target
+result
+result-*
+*.sqlite3
+*.sqlite3-*
+.env
+/python/__pycache__/
+/python/.venv/
