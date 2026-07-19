@@ -38,6 +38,9 @@ CREATE TABLE meetings (
     -- JSON array of people ids resolved from calendar attendees
     attendee_ids TEXT NOT NULL DEFAULT '[]',
     template_path TEXT,
+    -- JSON array of action ids pre-printed in this meeting's carried-over
+    -- table; lets ingest rebuild the exact zone spec the template was drawn with
+    carried_ids TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'scheduled'
         CHECK (status IN ('scheduled', 'captured', 'transcribed', 'reviewed'))
 );
@@ -88,7 +91,9 @@ CREATE TABLE page_state (
 
 CREATE TABLE transcriptions (
     id INTEGER PRIMARY KEY,
-    meeting_id INTEGER NOT NULL REFERENCES meetings (id),
+    -- nullable: a page that can't be matched to a meeting is still ingested
+    -- and gets assigned during review
+    meeting_id INTEGER REFERENCES meetings (id),
     page_image_path TEXT,
     raw_json TEXT NOT NULL,
     reviewed_json TEXT,

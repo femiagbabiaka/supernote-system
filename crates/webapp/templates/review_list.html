@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Review{% endblock %}
+{% block content %}
+<h2>{{ rows.len() }} transcribed page{% if rows.len() != 1 %}s{% endif %} awaiting review</h2>
+{% if rows.is_empty() %}
+<p class="muted">Nothing to review. Write something on the Manta.</p>
+{% else %}
+<table>
+  <tr><th>Meeting</th><th>Captured</th><th>Summary</th><th></th></tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.meeting }}</td>
+    <td class="muted">{{ r.created_at }}</td>
+    <td>{{ r.summary }}</td>
+    <td><a href="/review/{{ r.id }}">review →</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}

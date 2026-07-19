@@ -59,12 +59,18 @@ pub struct Meeting {
     /// JSON array of people ids.
     pub attendee_ids: String,
     pub template_path: Option<String>,
+    /// JSON array of action ids pre-printed on this meeting's template.
+    pub carried_ids: String,
     pub status: String,
 }
 
 impl Meeting {
     pub fn attendees(&self) -> Vec<i64> {
         serde_json::from_str(&self.attendee_ids).unwrap_or_default()
+    }
+
+    pub fn carried(&self) -> Vec<i64> {
+        serde_json::from_str(&self.carried_ids).unwrap_or_default()
     }
 }
 
@@ -123,7 +129,7 @@ pub struct ResearchReport {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Transcription {
     pub id: i64,
-    pub meeting_id: i64,
+    pub meeting_id: Option<i64>,
     pub page_image_path: Option<String>,
     pub raw_json: String,
     pub reviewed_json: Option<String>,

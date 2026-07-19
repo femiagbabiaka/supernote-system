@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Supernote{% endblock %}</title>
+<style>
+  :root { --fg: #1a1a1a; --muted: #667; --line: #ddd; --accent: #2456a6; }
+  body { font: 15px/1.5 system-ui, sans-serif; color: var(--fg); margin: 0; }
+  header { display: flex; gap: 1.5rem; align-items: baseline; padding: .7rem 1.2rem;
+           border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 1rem; margin: 0; }
+  header a { color: var(--accent); text-decoration: none; }
+  main { padding: 1.2rem; max-width: 1500px; margin: 0 auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: .35rem .6rem; border-bottom: 1px solid var(--line);
+           vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: .8rem; text-transform: uppercase; }
+  .muted { color: var(--muted); }
+  .pill { display: inline-block; padding: 0 .5rem; border-radius: 999px;
+          background: #eef2fa; color: var(--accent); font-size: .8rem; }
+  input[type=text], input[type=date], select, input[type=number] {
+    font: inherit; padding: .2rem .35rem; border: 1px solid var(--line); border-radius: 4px; }
+  input[type=text] { width: 100%; box-sizing: border-box; }
+  button { font: inherit; padding: .4rem 1rem; border: 0; border-radius: 6px;
+           background: var(--accent); color: #fff; cursor: pointer; }
+  .split { display: grid; grid-template-columns: minmax(320px, 44%) 1fr; gap: 1.2rem; }
+  .page-img { width: 100%; border: 1px solid var(--line); border-radius: 6px; }
+  .warn { color: #a33; font-size: .8rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Supernote</h1>
+  <a href="/review">Review</a>
+  <a href="/dashboard">Dashboard</a>
+</header>
+<main>{% block content %}{% endblock %}</main>
+</body>
+</html>

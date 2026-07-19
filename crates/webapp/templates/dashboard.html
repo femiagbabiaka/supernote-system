@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h2>{{ open.len() }} open action{% if open.len() != 1 %}s{% endif %}</h2>
+<table>
+  <tr><th>#</th><th>Action</th><th>Kind</th><th>Origin</th><th>Area</th>
+      <th>→ delegate</th><th>◎ owed</th><th>@ raise</th><th>!</th><th>Due</th><th>Research</th></tr>
+  {% for a in open %}
+  <tr>
+    <td class="muted">{{ a.id }}</td>
+    <td>{{ a.text }}</td>
+    <td><span class="pill">{{ a.kind }}</span></td>
+    <td class="muted">{{ a.meeting }}</td>
+    <td>{{ a.area }}</td>
+    <td>{{ a.delegated_to }}</td>
+    <td>{{ a.owed_to }}</td>
+    <td>{{ a.raise_with }}</td>
+    <td>{% for _ in 0..a.priority %}!{% endfor %}</td>
+    <td>{{ a.due_date }}</td>
+    <td>
+      {% if !a.research_status.is_empty() %}
+      <span class="pill">{{ a.research_status }}</span>
+      {% if a.research_status == "failed" %}
+      <form method="post" action="/research/{{ a.research_id }}/retry" style="display:inline">
+        <button type="submit">retry</button>
+      </form>
+      {% endif %}
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+{% if !done_recent.is_empty() %}
+<h2>Recently closed</h2>
+<table>
+  <tr><th>#</th><th>Action</th><th>Origin</th></tr>
+  {% for a in done_recent %}
+  <tr>
+    <td class="muted">{{ a.id }}</td>
+    <td>{{ a.text }}</td>
+    <td class="muted">{{ a.meeting }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}
