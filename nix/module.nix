@@ -180,12 +180,15 @@ in
         ExecStop = "${pkgs.fuse}/bin/fusermount -u ${gdriveDir}";
         Restart = "on-failure";
         RestartSec = 10;
-        # FUSE needs /dev/fuse; keep the rest tight.
         DeviceAllow = [ "/dev/fuse rw" ];
-        NoNewPrivileges = true;
-        PrivateTmp = true;
-        ProtectHome = true;
-        ReadWritePaths = [ stateDir ];
+        # This unit is deliberately NOT sandboxed, for two FUSE reasons:
+        #  * NoNewPrivileges would strip the setuid bit from fusermount3, so
+        #    the mount syscall returns EPERM.
+        #  * PrivateTmp / ProtectHome / ReadWritePaths each give the unit a
+        #    private mount namespace, trapping the FUSE mount there so the
+        #    webapp/agent/templater units never see it. Running in the host
+        #    namespace lets the (shared) mount propagate to them.
+        # The app units carry the hardening instead.
       };
     };
 
