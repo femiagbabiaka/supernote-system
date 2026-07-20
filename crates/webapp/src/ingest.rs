@@ -1,6 +1,10 @@
 //! Ingest API used by the ingest agent:
 //! - `POST /api/pages/check` — dedup probe against the page_state ledger.
 //! - `POST /api/ingest` — multipart page image + metadata → transcription.
+//!
+//! Meetings are created here, from the page itself: the template background
+//! identifies the series (`s<id>_*.png`), and the handwritten "Meeting:" /
+//! "With:" header lines supply the title and attendees. No calendar.
 
 use std::sync::Arc;
 
@@ -8,14 +12,15 @@ use anyhow::{Context, Result};
 use axum::extract::{Multipart, State};
 use axum::http::StatusCode;
 use axum::Json;
-use chrono::Utc;
+use chrono::{NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use supernote_core::grammar;
-use supernote_core::models::{Area, Person};
+use supernote_core::models::{Area, MeetingSeries, Person};
 use supernote_core::template_spec::TemplateSpec;
 
+use crate::claude::Transcribed;
 use crate::state::{internal_error, AppState};
 
 #[derive(Debug, Deserialize)]
@@ -60,7 +65,6 @@ pub async fn ingest(
     let mut note_path = None;
     let mut page_index: Option<i64> = None;
     let mut ink_hash = None;
-    let mut meeting_id: Option<i64> = None;
     let mut template_name: Option<String> = None;
     let mut image: Option<Vec<u8>> = None;
 
@@ -74,7 +78,6 @@ pub async fn ingest(
             "note_path" => note_path = Some(field.text().await.unwrap_or_default()),
             "page_index" => page_index = field.text().await.ok().and_then(|s| s.parse().ok()),
             "ink_hash" => ink_hash = Some(field.text().await.unwrap_or_default()),
-            "meeting_id" => meeting_id = field.text().await.ok().and_then(|s| s.parse().ok()),
             "template" => template_name = field.text().await.ok().filter(|s| !s.is_empty()),
             "image" => {
                 image = Some(
@@ -94,12 +97,71 @@ pub async fn ingest(
     let ink_hash = ink_hash.ok_or((StatusCode::BAD_REQUEST, "ink_hash required".into()))?;
     let image = image.ok_or((StatusCode::BAD_REQUEST, "image required".into()))?;
 
-    process_page(
-        &state, &note_path, page_index, &ink_hash, meeting_id, template_name, image,
-    )
-    .await
-    .map(Json)
-    .map_err(internal_error)
+    process_page(&state, &note_path, page_index, &ink_hash, template_name, image)
+        .await
+        .map(Json)
+        .map_err(internal_error)
+}
+
+/// What kind of page a template background identifies.
+#[derive(Debug, PartialEq)]
+enum PageKind {
+    /// A standing-meeting template: `s<id>_<slug>`.
+    Series(i64),
+    /// The reading/listening template.
+    Reading,
+    /// The generic ad-hoc meeting template, or anything unrecognized.
+    AdHoc,
+}
+
+/// Classify a template name like `user_s3_1-1-priya` / `reading.png`.
+fn classify_template(name: Option<&str>) -> PageKind {
+    let Some(name) = name else {
+        return PageKind::AdHoc;
+    };
+    let stem = name.strip_prefix("user_").unwrap_or(name);
+    let stem = stem.strip_suffix(".png").unwrap_or(stem);
+    if stem == "reading" {
+        return PageKind::Reading;
+    }
+    let series = || -> Option<i64> {
+        let rest = stem.strip_prefix('s')?;
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() || !rest[digits.len()..].starts_with('_') {
+            return None;
+        }
+        digits.parse().ok()
+    };
+    series().map(PageKind::Series).unwrap_or(PageKind::AdHoc)
+}
+
+/// Meeting date: `YYYYMMDD` prefix of the daily notebook's file name when
+/// present (e.g. `Note/20260720.note`), otherwise today.
+fn meeting_date(note_path: &str) -> NaiveDate {
+    std::path::Path::new(note_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .and_then(|s| {
+            let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if digits.len() >= 8 {
+                NaiveDate::parse_from_str(&digits[..8], "%Y%m%d").ok()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| Utc::now().date_naive())
+}
+
+fn slugify(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|p| !p.is_empty())
+        .take(5)
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 async fn process_page(
@@ -107,28 +169,16 @@ async fn process_page(
     note_path: &str,
     page_index: i64,
     ink_hash: &str,
-    explicit_meeting: Option<i64>,
     template_name: Option<String>,
     image: Vec<u8>,
 ) -> Result<IngestResponse> {
-    // Resolve the meeting: explicit id > template file-name match.
-    let meeting_id = match explicit_meeting {
-        Some(id) => Some(id),
-        None => match &template_name {
-            Some(name) => {
-                // Device reports user templates as "user_<file stem>".
-                let stem = name.strip_prefix("user_").unwrap_or(name);
-                sqlx::query_as::<_, (i64,)>(
-                    "SELECT id FROM meetings WHERE template_path LIKE '%' || ? || '%' \
-                     ORDER BY start_time DESC LIMIT 1",
-                )
-                .bind(stem)
-                .fetch_optional(&state.pool)
-                .await?
-                .map(|(id,)| id)
-            }
-            None => None,
-        },
+    let page_kind = classify_template(template_name.as_deref());
+    let series: Option<MeetingSeries> = match page_kind {
+        PageKind::Series(sid) => sqlx::query_as("SELECT * FROM meeting_series WHERE id = ?")
+            .bind(sid)
+            .fetch_optional(&state.pool)
+            .await?,
+        _ => None,
     };
 
     // Persist the page image for the review UI.
@@ -142,17 +192,8 @@ async fn process_page(
         .await
         .with_context(|| format!("writing {}", image_path.display()))?;
 
-    // Carried-over ids printed on this meeting's template, recorded by the
-    // templater — lets us hand Claude the exact zone spec the page was drawn with.
-    let carried_ids: Vec<i64> = match meeting_id {
-        Some(mid) => sqlx::query_as::<_, (String,)>("SELECT carried_ids FROM meetings WHERE id = ?")
-            .bind(mid)
-            .fetch_optional(&state.pool)
-            .await?
-            .map(|(s,)| serde_json::from_str(&s).unwrap_or_default())
-            .unwrap_or_default(),
-        None => Vec::new(),
-    };
+    // Zone spec matches what the templater printed for this series.
+    let carried_ids = series.as_ref().map(|s| s.carried()).unwrap_or_default();
     let spec = TemplateSpec::new(&carried_ids);
 
     let people: Vec<Person> = sqlx::query_as("SELECT * FROM people ORDER BY name")
@@ -173,8 +214,11 @@ async fn process_page(
         )
         .await?;
 
-    // Resolve names -> person ids server-side (Claude already normalizes
-    // spelling to the directory, this maps to ids and catches misses).
+    let meeting_id =
+        upsert_meeting(state, note_path, &page_kind, &series, &transcribed, &people).await?;
+
+    // Resolve item names -> person ids (Claude normalizes spelling to the
+    // directory; this maps to ids and surfaces misses in the review UI).
     let resolved: Vec<serde_json::Value> = transcribed
         .items
         .iter()
@@ -215,7 +259,7 @@ async fn process_page(
     .fetch_one(&state.pool)
     .await?;
 
-    // Record the dedup ledger entry and bump meeting status.
+    // Record the dedup ledger entry.
     sqlx::query(
         "INSERT INTO page_state (note_path, page_index, ink_hash) VALUES (?, ?, ?) \
          ON CONFLICT (note_path, page_index) \
@@ -228,16 +272,146 @@ async fn process_page(
     .execute(&state.pool)
     .await?;
 
-    if let Some(mid) = meeting_id {
-        sqlx::query("UPDATE meetings SET status = 'transcribed' WHERE id = ? AND status IN ('scheduled', 'captured')")
-            .bind(mid)
-            .execute(&state.pool)
-            .await?;
-    }
-
     tracing::info!(transcription_id, ?meeting_id, note_path, page_index, "page ingested");
     Ok(IngestResponse {
         transcription_id,
         meeting_id,
     })
+}
+
+/// Get-or-create the meeting/reading session this page belongs to, merging
+/// handwritten attendees (and title, for ad-hoc pages) into the row.
+async fn upsert_meeting(
+    state: &AppState,
+    note_path: &str,
+    page_kind: &PageKind,
+    series: &Option<MeetingSeries>,
+    transcribed: &Transcribed,
+    people: &[Person],
+) -> Result<Option<i64>> {
+    let date = meeting_date(note_path);
+    let written_title = transcribed
+        .meeting_title
+        .clone()
+        .filter(|t| !t.trim().is_empty());
+
+    let (kind, key, title, mut attendees) = match (page_kind, series) {
+        (_, Some(s)) => (
+            "meeting",
+            format!("s{}_{date}", s.id),
+            s.title.clone(),
+            {
+                let mut ids = s.attendees();
+                if let Some(pid) = s.person_id {
+                    ids.push(pid);
+                }
+                ids
+            },
+        ),
+        (PageKind::Reading, _) => {
+            // The "By:" line holds the author/creator, not attendees — fold
+            // it into the title rather than resolving against people.
+            let mut title = written_title.unwrap_or_else(|| "(untitled)".into());
+            if !transcribed.attendees.is_empty() {
+                title = format!("{title} — by {}", transcribed.attendees.join(", "));
+            }
+            (
+                "reading",
+                format!("reading_{date}_{}", slugify(&title)),
+                title,
+                Vec::new(),
+            )
+        }
+        _ => {
+            let title = written_title.unwrap_or_else(|| "(untitled)".into());
+            (
+                "meeting",
+                format!("adhoc_{date}_{}", slugify(&title)),
+                title,
+                Vec::new(),
+            )
+        }
+    };
+    if kind == "meeting" {
+        attendees.extend(
+            transcribed
+                .attendees
+                .iter()
+                .filter_map(|n| grammar::resolve_person(n, people)),
+        );
+    }
+    attendees.sort_unstable();
+    attendees.dedup();
+
+    let existing: Option<(i64, String)> =
+        sqlx::query_as("SELECT id, attendee_ids FROM meetings WHERE meeting_key = ?")
+            .bind(&key)
+            .fetch_optional(&state.pool)
+            .await?;
+
+    let id = match existing {
+        Some((id, prior)) => {
+            // Merge attendees discovered on later pages of the same meeting.
+            let mut merged: Vec<i64> = serde_json::from_str(&prior).unwrap_or_default();
+            merged.extend(attendees);
+            merged.sort_unstable();
+            merged.dedup();
+            sqlx::query(
+                "UPDATE meetings SET attendee_ids = ?, status = 'transcribed' WHERE id = ?",
+            )
+            .bind(serde_json::to_string(&merged).unwrap())
+            .bind(id)
+            .execute(&state.pool)
+            .await?;
+            id
+        }
+        None => {
+            sqlx::query_scalar(
+                "INSERT INTO meetings \
+                 (meeting_key, kind, series_id, title, area_id, start_time, attendee_ids, status) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 'transcribed') RETURNING id",
+            )
+            .bind(&key)
+            .bind(kind)
+            .bind(series.as_ref().map(|s| s.id))
+            .bind(&title)
+            .bind(series.as_ref().and_then(|s| s.area_id))
+            .bind(format!("{date}T00:00:00Z"))
+            .bind(serde_json::to_string(&attendees).unwrap())
+            .fetch_one(&state.pool)
+            .await?
+        }
+    };
+    Ok(Some(id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn template_names_classify() {
+        assert_eq!(classify_template(Some("user_s3_1-1-priya")), PageKind::Series(3));
+        assert_eq!(classify_template(Some("s12_infra-weekly.png")), PageKind::Series(12));
+        assert_eq!(classify_template(Some("user_reading")), PageKind::Reading);
+        assert_eq!(classify_template(Some("reading.png")), PageKind::Reading);
+        assert_eq!(classify_template(Some("user_adhoc")), PageKind::AdHoc);
+        assert_eq!(classify_template(Some("style_four_quadrant_method")), PageKind::AdHoc);
+        assert_eq!(classify_template(Some("s_missing_id")), PageKind::AdHoc);
+        assert_eq!(classify_template(None), PageKind::AdHoc);
+    }
+
+    #[test]
+    fn meeting_date_from_daily_notebook_name() {
+        assert_eq!(
+            meeting_date("Note/20260720.note"),
+            NaiveDate::from_ymd_opt(2026, 7, 20).unwrap()
+        );
+        assert_eq!(
+            meeting_date("Note/20260618_074222.note"),
+            NaiveDate::from_ymd_opt(2026, 6, 18).unwrap()
+        );
+        // Non-dated names fall back to today — just ensure no panic.
+        let _ = meeting_date("Note/scratchpad.note");
+    }
 }

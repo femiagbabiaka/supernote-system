@@ -22,4 +22,3 @@ clap.workspace = true
 image.workspace = true
 imageproc = { version = "0.25", default-features = false }
 ab_glyph = "0.2"
-yup-oauth2 = "12"

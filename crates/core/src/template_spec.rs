@@ -39,11 +39,20 @@ pub struct CarriedRow {
 }
 
 /// Full zone layout for one meeting template page.
+///
+/// The header carries two write-in ruled lines instead of calendar data —
+/// there is no calendar integration by design. On a series template the
+/// title line is pre-printed with the series name; on the generic ad-hoc
+/// template both lines are blank and handwritten.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemplateSpec {
     pub page_w: u32,
     pub page_h: u32,
     pub header: Rect,
+    /// "Meeting:" ruled line — handwritten (or pre-printed) meeting title.
+    pub title_line: Rect,
+    /// "With:" ruled line — handwritten attendee names.
+    pub with_line: Rect,
     pub carried_rows: Vec<CarriedRow>,
     /// Freehand writing area (everything below the printed zones).
     pub writing: Rect,
@@ -58,6 +67,19 @@ impl TemplateSpec {
             y: 0,
             w: PAGE_W,
             h: HEADER_H,
+        };
+        // Two ruled write-in lines inside the header band.
+        let title_line = Rect {
+            x: MARGIN,
+            y: 40,
+            w: PAGE_W - 2 * MARGIN,
+            h: 80,
+        };
+        let with_line = Rect {
+            x: MARGIN,
+            y: 140,
+            w: PAGE_W - 2 * MARGIN,
+            h: 80,
         };
         let shown = &carried_action_ids[..carried_action_ids.len().min(MAX_CARRIED)];
         let mut carried_rows = Vec::with_capacity(shown.len());
@@ -88,6 +110,8 @@ impl TemplateSpec {
             page_w: PAGE_W,
             page_h: PAGE_H,
             header,
+            title_line,
+            with_line,
             carried_rows,
             writing: Rect {
                 x: 0,

@@ -80,9 +80,9 @@ async fn main() -> Result<()> {
         // JSON API consumed by the templater and ingest agent.
         .route("/api/pages/check", post(ingest::check_page))
         .route("/api/ingest", post(ingest::ingest))
-        .route("/api/meetings/upsert", post(api::upsert_meetings))
-        .route("/api/meetings/{id}/template", post(api::set_template_path))
-        .route("/api/templates", get(api::templates_for_date))
+        .route("/api/series", get(api::list_series).post(api::create_series))
+        .route("/api/series/{id}/template", post(api::set_series_template))
+        .route("/api/templates", get(api::templates))
         .route("/api/people", get(api::list_people).post(api::create_person))
         .route("/api/areas", get(api::list_areas).post(api::create_area))
         .with_state(state.clone());

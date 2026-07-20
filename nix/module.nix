@@ -95,23 +95,6 @@ in
       description = "Subdirectory of the synced tree holding template PNGs.";
     };
 
-    googleClientSecretFile = lib.mkOption {
-      type = lib.types.path;
-      description = "Google OAuth desktop-client secret JSON (Calendar API).";
-    };
-
-    googleTokenCacheFile = lib.mkOption {
-      type = lib.types.str;
-      default = "${stateDir}/google-token.json";
-      description = "Cached Google OAuth token (produced by one interactive consent run).";
-    };
-
-    calendarId = lib.mkOption {
-      type = lib.types.str;
-      default = "primary";
-      description = "Google Calendar to read.";
-    };
-
     templaterOnCalendar = lib.mkOption {
       type = lib.types.str;
       default = "*-*-* 06:30:00";
@@ -244,11 +227,7 @@ in
         "supernote-webapp.service"
         "supernote-gdrive.service"
       ];
-      environment = commonEnv // {
-        GOOGLE_CLIENT_SECRET_FILE = toString cfg.googleClientSecretFile;
-        GOOGLE_TOKEN_CACHE = cfg.googleTokenCacheFile;
-        GOOGLE_CALENDAR_ID = cfg.calendarId;
-      };
+      environment = commonEnv;
       serviceConfig = hardening // {
         Type = "oneshot";
         User = "supernote";

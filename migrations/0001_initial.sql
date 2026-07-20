@@ -16,33 +16,41 @@ CREATE TABLE people (
     area_id INTEGER REFERENCES areas (id)
 );
 
+-- Standing meetings (1:1s, recurring syncs). Seeded via the API; each gets a
+-- pre-printed template. There is no calendar integration by design: what the
+-- system knows about meetings is what gets handwritten on the page.
 CREATE TABLE meeting_series (
     id INTEGER PRIMARY KEY,
-    -- Google Calendar recurringEventId, when known
-    gcal_recurring_event_id TEXT UNIQUE,
-    title TEXT NOT NULL,
+    title TEXT NOT NULL UNIQUE,
     area_id INTEGER REFERENCES areas (id),
     is_one_on_one INTEGER NOT NULL DEFAULT 0,
     -- the counterpart for 1:1 series
-    person_id INTEGER REFERENCES people (id)
+    person_id INTEGER REFERENCES people (id),
+    -- JSON array of regular-attendee people ids (used for action routing)
+    attendee_ids TEXT NOT NULL DEFAULT '[]',
+    -- template bookkeeping: generated PNG + the action ids printed on it,
+    -- so ingest can rebuild the exact zone spec the page was drawn with
+    template_path TEXT,
+    carried_ids TEXT NOT NULL DEFAULT '[]'
 );
 
+-- One row per captured session. Created at ingest time from the page's
+-- template + handwritten header (title / attendees), not from a calendar.
+-- Reading/listening notes are sessions too (kind = 'reading').
 CREATE TABLE meetings (
     id INTEGER PRIMARY KEY,
-    gcal_event_id TEXT NOT NULL UNIQUE,
+    -- idempotency key: "s<series_id>_<date>", "adhoc_<date>_<slug>",
+    -- or "reading_<date>_<slug>"
+    meeting_key TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL DEFAULT 'meeting' CHECK (kind IN ('meeting', 'reading')),
     series_id INTEGER REFERENCES meeting_series (id),
     title TEXT NOT NULL,
     area_id INTEGER REFERENCES areas (id),
-    start_time TEXT NOT NULL, -- RFC 3339
-    end_time TEXT NOT NULL,   -- RFC 3339
-    -- JSON array of people ids resolved from calendar attendees
+    start_time TEXT NOT NULL, -- RFC 3339 (note capture time)
+    -- JSON array of people ids: series regulars + handwritten attendees
     attendee_ids TEXT NOT NULL DEFAULT '[]',
-    template_path TEXT,
-    -- JSON array of action ids pre-printed in this meeting's carried-over
-    -- table; lets ingest rebuild the exact zone spec the template was drawn with
-    carried_ids TEXT NOT NULL DEFAULT '[]',
-    status TEXT NOT NULL DEFAULT 'scheduled'
-        CHECK (status IN ('scheduled', 'captured', 'transcribed', 'reviewed'))
+    status TEXT NOT NULL DEFAULT 'captured'
+        CHECK (status IN ('captured', 'transcribed', 'reviewed'))
 );
 
 CREATE INDEX meetings_start_time ON meetings (start_time);

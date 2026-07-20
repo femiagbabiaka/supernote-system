@@ -1,14 +1,17 @@
-//! Morning templater: read today's Google Calendar, upsert meetings into the
-//! webapp, render one 1920×2560 template PNG per meeting (header + carried-over
-//! action strip), and drop them into the Drive-synced MyStyle folder.
+//! Templater: for each standing meeting series, render a 1920×2560 template
+//! PNG (pre-printed title + carried-over action strip + "With:" write-in
+//! line) into the Drive-synced MyStyle folder, plus one generic ad-hoc
+//! template with blank "Meeting:" / "With:" lines.
+//!
+//! There is no calendar integration by design: meeting identity comes from
+//! the chosen template + the handwritten header, so the only data leaving
+//! the machine is what gets written on the page.
 
 mod draw;
-mod google;
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use chrono::{Local, NaiveDate};
 use clap::Parser;
 use serde::Deserialize;
 use serde_json::json;
@@ -21,18 +24,6 @@ struct Config {
     /// The Drive-synced MyStyle directory (templates land here).
     #[arg(long, env = "SUPERNOTE_MYSTYLE_DIR")]
     mystyle_dir: PathBuf,
-    /// Google OAuth client secret JSON (desktop app credentials).
-    #[arg(long, env = "GOOGLE_CLIENT_SECRET_FILE")]
-    client_secret: PathBuf,
-    /// Where the OAuth refresh token is cached after first consent.
-    #[arg(long, env = "GOOGLE_TOKEN_CACHE")]
-    token_cache: PathBuf,
-    /// Calendar to read.
-    #[arg(long, env = "GOOGLE_CALENDAR_ID", default_value = "primary")]
-    calendar_id: String,
-    /// Date to generate templates for (default: today, local time).
-    #[arg(long)]
-    date: Option<NaiveDate>,
     /// Directory containing `<font-name>-Regular.ttf` / `-Bold.ttf`.
     #[arg(long, env = "SUPERNOTE_FONT_DIR")]
     font_dir: PathBuf,
@@ -40,15 +31,14 @@ struct Config {
     font_name: String,
 }
 
-/// Mirror of the webapp's `MeetingTemplateData`.
+/// Mirror of the webapp's `SeriesTemplateData`.
 #[derive(Debug, Deserialize)]
-pub struct MeetingTemplateData {
-    pub meeting_id: i64,
+pub struct SeriesTemplateData {
+    pub series_id: i64,
     pub title: String,
-    pub series_title: Option<String>,
     pub area: Option<String>,
-    pub start_time: String,
-    pub end_time: String,
+    pub is_one_on_one: bool,
+    pub person: Option<String>,
     pub carried: Vec<CarriedAction>,
 }
 
@@ -63,6 +53,18 @@ pub struct CarriedAction {
     pub raise_with: Option<String>,
 }
 
+fn slugify(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|p| !p.is_empty())
+        .take(5)
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -72,77 +74,75 @@ async fn main() -> Result<()> {
         )
         .init();
     let config = Config::parse();
-    let date = config.date.unwrap_or_else(|| Local::now().date_naive());
     let http = reqwest::Client::new();
 
-    // 1. Calendar → expanded event instances for the day.
-    let events = google::events_for_day(
-        &config.client_secret,
-        &config.token_cache,
-        &config.calendar_id,
-        date,
-    )
-    .await
-    .context("fetching calendar events")?;
-    tracing::info!(count = events.len(), %date, "calendar events fetched");
-
-    // 2. Upsert into the webapp so it can route open actions.
-    let upserted: Vec<serde_json::Value> = http
-        .post(format!("{}/api/meetings/upsert", config.webapp_url))
-        .json(&events)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await
-        .context("upserting meetings")?;
-    tracing::info!(count = upserted.len(), "meetings upserted");
-
-    // 3. Template data (carried-over actions per meeting, routing applied).
-    let data: Vec<MeetingTemplateData> = http
+    let data: Vec<SeriesTemplateData> = http
         .get(format!("{}/api/templates", config.webapp_url))
-        .query(&[("date", date.to_string())])
         .send()
         .await?
         .error_for_status()?
         .json()
         .await
-        .context("fetching template data")?;
+        .context("fetching template data (is the webapp running?)")?;
 
-    // 4. Render one PNG per meeting, sorted into meeting order by filename.
     std::fs::create_dir_all(&config.mystyle_dir)?;
     let fonts = draw::Fonts::load(&config.font_dir, &config.font_name)?;
-    for (i, meeting) in data.iter().enumerate() {
-        let slug: String = meeting
-            .title
-            .to_lowercase()
-            .chars()
-            .map(|c| if c.is_alphanumeric() { c } else { '-' })
-            .collect::<String>()
-            .split('-')
-            .filter(|s| !s.is_empty())
-            .take(5)
-            .collect::<Vec<_>>()
-            .join("-");
-        let file_name = format!("{date}_{:02}_{slug}.png", i + 1);
+
+    // One template per series, named s<id>_<slug> so ingest can map the
+    // page's chosen background back to the series.
+    for series in &data {
+        let file_name = format!("s{}_{}.png", series.series_id, slugify(&series.title));
         let path = config.mystyle_dir.join(&file_name);
-        let image = draw::render_template(meeting, &fonts)?;
-        image
+        let job = draw::TemplateJob {
+            labels: ("Meeting:", "With:"),
+            title: Some(series.title.clone()),
+            with: series.person.clone().filter(|_| series.is_one_on_one),
+            area: series.area.clone(),
+            carried: &series.carried,
+        };
+        draw::render_template(&job, &fonts)?
             .save(&path)
             .with_context(|| format!("writing {}", path.display()))?;
 
-        // Record the template path + printed carried ids on the meeting.
-        let carried_ids: Vec<i64> = meeting.carried.iter().map(|c| c.action_id).collect();
+        let carried_ids: Vec<i64> = series.carried.iter().map(|c| c.action_id).collect();
         http.post(format!(
-            "{}/api/meetings/{}/template",
-            config.webapp_url, meeting.meeting_id
+            "{}/api/series/{}/template",
+            config.webapp_url, series.series_id
         ))
         .json(&json!({"path": file_name, "carried_ids": carried_ids}))
         .send()
         .await?
         .error_for_status()?;
-        tracing::info!(meeting = %meeting.title, file = %path.display(), carried = carried_ids.len(), "template rendered");
+        tracing::info!(series = %series.title, file = %path.display(), carried = carried_ids.len(), "series template rendered");
     }
+
+    // Generic ad-hoc template: blank Meeting/With lines, no carried strip.
+    let adhoc = draw::TemplateJob {
+        labels: ("Meeting:", "With:"),
+        title: None,
+        with: None,
+        area: None,
+        carried: &[],
+    };
+    let path = config.mystyle_dir.join("adhoc.png");
+    draw::render_template(&adhoc, &fonts)?
+        .save(&path)
+        .with_context(|| format!("writing {}", path.display()))?;
+    tracing::info!(file = %path.display(), "ad-hoc template rendered");
+
+    // Reading/listening notes template: Title/By lines, no carried strip.
+    let reading = draw::TemplateJob {
+        labels: ("Title:", "By:"),
+        title: None,
+        with: None,
+        area: None,
+        carried: &[],
+    };
+    let path = config.mystyle_dir.join("reading.png");
+    draw::render_template(&reading, &fonts)?
+        .save(&path)
+        .with_context(|| format!("writing {}", path.display()))?;
+    tracing::info!(file = %path.display(), "reading template rendered");
 
     Ok(())
 }

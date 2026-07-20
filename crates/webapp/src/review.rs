@@ -205,10 +205,18 @@ pub async fn detail(
         meeting: meeting
             .map(|(t,)| t)
             .unwrap_or_else(|| "(unassigned)".into()),
-        header_text: raw["transcribed"]["header_text"]
-            .as_str()
-            .unwrap_or("")
-            .to_string(),
+        header_text: {
+            let title = raw["transcribed"]["meeting_title"].as_str().unwrap_or("");
+            let attendees: Vec<&str> = raw["transcribed"]["attendees"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            if attendees.is_empty() {
+                title.to_string()
+            } else {
+                format!("{title} — with {}", attendees.join(", "))
+            }
+        },
         summary: raw["transcribed"]["summary"].as_str().unwrap_or("").to_string(),
         image: image.unwrap_or_default(),
         items,

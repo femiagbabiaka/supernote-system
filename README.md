@@ -1,20 +1,27 @@
 # supernote-system
 
 A Supernote Manta (A5X2) as the front end of a fully automated meeting
-workflow, Google Workspace edition. Inspired by
-[this r/Supernote post](https://www.reddit.com/r/Supernote/comments/1v0mpr5/).
+workflow. Inspired by
+[this r/Supernote post](https://www.reddit.com/r/Supernote/comments/1v0mpr5/),
+with one deliberate difference: **no calendar integration**. Meeting identity
+comes from the page itself — the chosen template plus a handwritten header —
+so no work-calendar credential exists and the only data that leaves the
+machine is ink you chose to write.
 
-- **Morning**: the templater reads Google Calendar and drops one 1920×2560
-  template PNG per meeting into the Drive-synced `MyStyle/` folder — title,
-  time, series, and area pre-printed, plus a strip of that meeting's still-open
-  action items with tick-boxes.
-- **In the meeting**: pick the template as the page background and write.
+- **Daily**: the templater renders one template PNG per standing meeting
+  series — title pre-printed, that series' still-open action items as a
+  tick-box strip — plus a generic ad-hoc template with blank `Meeting:` /
+  `With:` lines and a reading/listening template with `Title:` / `By:` lines.
+  They land in the Drive-synced `MyStyle/` folder.
+- **In the meeting**: pick the series template (or the ad-hoc one and jot the
+  title/attendees on the header lines) as the page background and write.
   Symbols mark delegation (`→ name`), deliverables owed (`◎ name` / `(o) name`),
   raise-with (`@ name`), priority (`!`), research requests (leading `?`), due
   dates. Ticking a printed item marks it done.
 - **After**: the ingest agent picks up settled `.note` files, renders the ink,
-  composites it over the template, and Claude transcribes it — it knows the
-  zone layout, your people, and your areas.
+  composites it over the template, and Claude transcribes it — including the
+  handwritten header, resolved against your people directory. Meetings are
+  created from what's on the page.
 - **Review**: the webapp shows pages awaiting review; fix the odd word, save.
   Saved actions feed the next templates; `@person` items appear on that
   person's next meeting sheet regardless of origin; confirmed `?` items kick
@@ -26,7 +33,7 @@ workflow, Google Workspace edition. Inspired by
 |---|---|
 | `crates/core` | models, SQLite migrations, symbol grammar, template zone spec, routing rule |
 | `crates/webapp` | axum server: ingest + transcription, review UI, dashboard, template data API, research worker |
-| `crates/templater` | Calendar → template PNGs → `MyStyle/` |
+| `crates/templater` | series → template PNGs → `MyStyle/` |
 | `crates/agent` | `.note` scan → render → dedup → composite → POST |
 | `python/render_note.py` | thin `supernotelib` wrapper: `.note` → ink-as-alpha PNGs |
 | `nix/` | packages + the `services.supernote` NixOS module |
@@ -42,7 +49,6 @@ services.supernote = {
   openFirewall = true;
   environmentFile = "/var/lib/supernote/secrets.env";
   rcloneConfigFile = "/var/lib/supernote/rclone.conf";
-  googleClientSecretFile = "/var/lib/supernote/google-client-secret.json";
 };
 ```
 
@@ -52,37 +58,31 @@ This runs four units: `supernote-gdrive` (rclone mount of the Drive tree),
 
 ## One-time setup
 
-1. **Google Cloud**: create a project, enable the **Calendar API**, create an
-   **OAuth desktop client**, download the client secret JSON to
-   `/var/lib/supernote/google-client-secret.json`.
-2. **Consent run** (interactive, once): on the server, as the service user:
-   ```sh
-   sudo -u supernote env \
-     GOOGLE_CLIENT_SECRET_FILE=/var/lib/supernote/google-client-secret.json \
-     GOOGLE_TOKEN_CACHE=/var/lib/supernote/google-token.json \
-     SUPERNOTE_MYSTYLE_DIR=/var/lib/supernote/gdrive/MyStyle \
-     SUPERNOTE_FONT_DIR=$(nix build --print-out-paths nixpkgs#liberation_ttf)/share/fonts/truetype \
-     supernote-templater
-   ```
-   Follow the printed URL, approve read-only calendar access; the refresh
-   token is cached and every later run is headless.
-3. **rclone**: `rclone config` a Drive remote scoped to the folder the
+1. **rclone**: `rclone config` a Drive remote scoped to the folder the
    Supernote syncs to; copy the resulting config to
-   `/var/lib/supernote/rclone.conf` (owner `supernote`, mode 600).
-4. **Anthropic key**: `/var/lib/supernote/secrets.env` containing
+   `/var/lib/supernote/rclone.conf` (owner `supernote`, mode 600). A personal
+   Google account is fine — the device syncs to whatever Drive you sign it
+   into; nothing here touches a work account.
+2. **Anthropic key**: `/var/lib/supernote/secrets.env` containing
    `ANTHROPIC_API_KEY=sk-ant-...` (mode 600).
-5. **On the Manta**: Settings → Cloud storage → Google Drive, sign in, sync.
-   Use a dedicated daily notebook; per meeting page, choose the day's template
-   as the page background (templates appear under My Styles after a sync).
-6. **Seed people and areas** — this is what makes name/area resolution work:
+3. **On the Manta**: Settings → Cloud storage → Google Drive, sign in, sync.
+   Use a dedicated daily notebook (date-named notebooks, e.g. `20260720.note`,
+   give meetings their correct date); per meeting page, choose the series
+   template as the page background (templates appear under My Styles after a
+   sync).
+4. **Seed people, areas, and standing meetings** — this is what makes
+   name/area resolution and routing work:
    ```sh
    curl -X POST localhost:8130/api/areas -H 'content-type: application/json' \
      -d '{"name":"Infrastructure","aliases":"infra"}'
    curl -X POST localhost:8130/api/people -H 'content-type: application/json' \
-     -d '{"name":"Alice Chen","aliases":"AC,alice","email":"alice@corp.example","area_id":1}'
+     -d '{"name":"Priya Natarajan","aliases":"PN,priya","area_id":1}'
+   curl -X POST localhost:8130/api/series -H 'content-type: application/json' \
+     -d '{"title":"1:1 Priya","is_one_on_one":true,"person_id":1,"area_id":1}'
+   curl -X POST localhost:8130/api/series -H 'content-type: application/json' \
+     -d '{"title":"Infra weekly","area_id":1,"attendee_ids":[1]}'
    ```
-   Emails must match calendar attendee addresses (that's how attendees and
-   1:1 counterparts are detected).
+   Then run the templater once (or wait for the timer) and sync the device.
 
 ## Handwriting grammar
 
@@ -97,10 +97,17 @@ D: / T: / N:             (leading) decision / takeaway / note
 ☐ / ☑                    printed carried-over tick-boxes
 ```
 
+Header lines: `Meeting:` (pre-printed on series templates, handwritten on
+ad-hoc pages) and `With:` (handwritten attendees; extra names on a series
+page are merged in). The reading template uses `Title:` / `By:` instead —
+notes there become `reading` sessions: takeaways and `?` research requests
+work exactly as in meetings, and `@ name` still routes an item onto that
+person's next meeting sheet ("discuss this book with...").
+
 ## Development
 
 ```sh
-nix develop           # cargo, sqlx-cli, rclone, fonts, python
+nix develop           # cargo, sqlx-cli, rclone, fonts, supernote-render
 cargo test --workspace
 cargo run -p supernote-webapp   # needs ANTHROPIC_API_KEY
 nix build .#supernote-system .#supernote-renderer

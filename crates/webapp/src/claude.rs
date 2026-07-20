@@ -45,7 +45,10 @@ pub struct CarriedTick {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transcribed {
-    pub header_text: String,
+    /// Handwritten (or pre-printed) meeting title from the "Meeting:" line.
+    pub meeting_title: Option<String>,
+    /// Handwritten attendee names from the "With:" line.
+    pub attendees: Vec<String>,
     pub carried_ticks: Vec<CarriedTick>,
     pub items: Vec<TranscribedItem>,
     pub summary: String,
@@ -136,17 +139,23 @@ impl Claude {
 
         let system = format!(
             "You transcribe handwritten meeting notes captured on a Supernote e-ink tablet. \
-             The page has pre-printed template zones (header, carried-over action rows with \
-             tick-boxes and printed #id markers) and a freehand writing area. \
+             The page has pre-printed template zones and a freehand writing area. The header \
+             band has two ruled lines: a title line (labelled 'Meeting:' or 'Title:', value \
+             pre-printed or handwritten) and a names line (labelled 'With:' for attendees or \
+             'By:' for an author/creator on reading notes). Below it may be a strip of \
+             carried-over action rows with tick-boxes and printed #id markers. \
              Zone geometry (pixel coords): {}\n\n\
              {}\n\n\
              People directory (resolve handwritten names to these exact spellings):\n{}\n\n\
              Topic areas:\n{}\n\n\
-             Return: header_text (the printed header you can read), carried_ticks (one entry \
-             per printed carried-over row, action_id from its printed #id, ticked=true only \
-             if the box is clearly marked), items (one per distinct handwritten line/thought, \
-             classified and with markers stripped into fields; use null for absent fields; \
-             due_date as YYYY-MM-DD), and a one-sentence summary of the page.",
+             Return: meeting_title (from the title line; null if blank), attendees (names \
+             from the names line — resolve 'With:' names to the directory, transcribe 'By:' \
+             author names literally; empty if blank), carried_ticks \
+             (one entry per printed carried-over row, action_id from its printed #id, \
+             ticked=true only if the box is clearly marked), items (one per distinct \
+             handwritten line/thought, classified and with markers stripped into fields; \
+             use null for absent fields; due_date as YYYY-MM-DD), and a one-sentence \
+             summary of the page.",
             spec.to_prompt_json(),
             grammar::prompt_block(),
             people_list.join("\n"),
@@ -157,7 +166,8 @@ impl Claude {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-                "header_text": {"type": "string"},
+                "meeting_title": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                "attendees": {"type": "array", "items": {"type": "string"}},
                 "carried_ticks": {
                     "type": "array",
                     "items": {
@@ -189,7 +199,7 @@ impl Claude {
                 },
                 "summary": {"type": "string"}
             },
-            "required": ["header_text", "carried_ticks", "items", "summary"]
+            "required": ["meeting_title", "attendees", "carried_ticks", "items", "summary"]
         });
 
         let body = json!({

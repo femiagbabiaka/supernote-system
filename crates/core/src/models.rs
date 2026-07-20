@@ -31,17 +31,30 @@ impl Person {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct MeetingSeries {
     pub id: i64,
-    pub gcal_recurring_event_id: Option<String>,
     pub title: String,
     pub area_id: Option<i64>,
     pub is_one_on_one: bool,
     pub person_id: Option<i64>,
+    /// JSON array of regular-attendee people ids.
+    pub attendee_ids: String,
+    pub template_path: Option<String>,
+    /// JSON array of action ids printed on this series' current template.
+    pub carried_ids: String,
+}
+
+impl MeetingSeries {
+    pub fn attendees(&self) -> Vec<i64> {
+        serde_json::from_str(&self.attendee_ids).unwrap_or_default()
+    }
+
+    pub fn carried(&self) -> Vec<i64> {
+        serde_json::from_str(&self.carried_ids).unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MeetingStatus {
-    Scheduled,
     Captured,
     Transcribed,
     Reviewed,
@@ -50,27 +63,23 @@ pub enum MeetingStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Meeting {
     pub id: i64,
-    pub gcal_event_id: String,
+    /// Idempotency key: `s<series_id>_<date>`, `adhoc_<date>_<slug>`, or
+    /// `reading_<date>_<slug>`.
+    pub meeting_key: String,
+    /// `meeting` or `reading` (reading/listening notes).
+    pub kind: String,
     pub series_id: Option<i64>,
     pub title: String,
     pub area_id: Option<i64>,
     pub start_time: DateTime<Utc>,
-    pub end_time: DateTime<Utc>,
-    /// JSON array of people ids.
+    /// JSON array of people ids (series regulars + handwritten attendees).
     pub attendee_ids: String,
-    pub template_path: Option<String>,
-    /// JSON array of action ids pre-printed on this meeting's template.
-    pub carried_ids: String,
     pub status: String,
 }
 
 impl Meeting {
     pub fn attendees(&self) -> Vec<i64> {
         serde_json::from_str(&self.attendee_ids).unwrap_or_default()
-    }
-
-    pub fn carried(&self) -> Vec<i64> {
-        serde_json::from_str(&self.carried_ids).unwrap_or_default()
     }
 }
 

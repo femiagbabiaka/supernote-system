@@ -6,17 +6,19 @@ use std::path::Path;
 
 use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
 use anyhow::{Context, Result};
-use chrono::DateTime;
 use image::{GrayImage, Luma};
 use imageproc::drawing::{draw_filled_rect_mut, draw_hollow_rect_mut, draw_text_mut};
 use imageproc::rect::Rect;
 
-use supernote_core::template_spec::{TemplateSpec, MARGIN, MAX_CARRIED, PAGE_H, PAGE_W, TICKBOX};
+use supernote_core::template_spec::{
+    Rect as Zone, TemplateSpec, MARGIN, MAX_CARRIED, PAGE_H, PAGE_W, TICKBOX,
+};
 
-use crate::MeetingTemplateData;
+use crate::CarriedAction;
 
 const BLACK: Luma<u8> = Luma([0u8]);
 const GRAY: Luma<u8> = Luma([110u8]);
+const LIGHT: Luma<u8> = Luma([170u8]);
 const WHITE: Luma<u8> = Luma([255u8]);
 
 pub struct Fonts {
@@ -39,6 +41,20 @@ impl Fonts {
     }
 }
 
+/// What to print on one template.
+pub struct TemplateJob<'a> {
+    /// Header line labels: ("Meeting:", "With:") for meetings,
+    /// ("Title:", "By:") for reading/listening notes.
+    pub labels: (&'static str, &'static str),
+    /// Pre-printed title (series templates); None leaves the line blank
+    /// for handwriting (ad-hoc / reading templates).
+    pub title: Option<String>,
+    /// Pre-printed second-line value (the 1:1 counterpart); None = blank.
+    pub with: Option<String>,
+    pub area: Option<String>,
+    pub carried: &'a [CarriedAction],
+}
+
 fn text_width(font: &FontVec, scale: PxScale, text: &str) -> f32 {
     let sf = font.as_scaled(scale);
     text.chars().map(|c| sf.h_advance(sf.glyph_id(c))).sum()
@@ -56,55 +72,80 @@ fn fit(font: &FontVec, scale: PxScale, text: &str, max: f32) -> String {
     format!("{s}…")
 }
 
-pub fn render_template(meeting: &MeetingTemplateData, fonts: &Fonts) -> Result<GrayImage> {
-    let carried_ids: Vec<i64> = meeting.carried.iter().map(|c| c.action_id).collect();
+/// A labelled write-in ruled line: gray label, baseline rule across the zone,
+/// optionally pre-filled with printed text.
+fn draw_write_in_line(
+    img: &mut GrayImage,
+    fonts: &Fonts,
+    zone: &Zone,
+    label: &str,
+    value: Option<&str>,
+) {
+    let label_scale = PxScale::from(38.0);
+    let value_scale = PxScale::from(48.0);
+    let baseline = (zone.y + zone.h) as i32 - 14;
+
+    draw_text_mut(
+        img,
+        GRAY,
+        zone.x as i32,
+        baseline - 40,
+        label_scale,
+        &fonts.regular,
+        label,
+    );
+    let label_w = text_width(&fonts.regular, label_scale, label).ceil() as i32 + 24;
+
+    // The rule the user writes on.
+    draw_filled_rect_mut(
+        img,
+        Rect::at(zone.x as i32 + label_w, baseline)
+            .of_size(zone.w - label_w as u32, 2),
+        LIGHT,
+    );
+
+    if let Some(v) = value {
+        let v = fit(
+            &fonts.bold,
+            value_scale,
+            v,
+            (zone.w - label_w as u32) as f32 - 12.0,
+        );
+        draw_text_mut(
+            img,
+            BLACK,
+            zone.x as i32 + label_w + 6,
+            baseline - 50,
+            value_scale,
+            &fonts.bold,
+            &v,
+        );
+    }
+}
+
+pub fn render_template(job: &TemplateJob, fonts: &Fonts) -> Result<GrayImage> {
+    let carried_ids: Vec<i64> = job.carried.iter().map(|c| c.action_id).collect();
     let spec = TemplateSpec::new(&carried_ids);
     let mut img = GrayImage::from_pixel(PAGE_W, PAGE_H, WHITE);
 
-    // ---- Header band -----------------------------------------------------
-    let title_scale = PxScale::from(64.0);
-    let title = fit(
-        &fonts.bold,
-        title_scale,
-        &meeting.title,
-        (PAGE_W - 2 * MARGIN) as f32,
-    );
-    draw_text_mut(&mut img, BLACK, MARGIN as i32, 36, title_scale, &fonts.bold, &title);
+    // ---- Header band: labelled write-in lines -------------------------------
+    draw_write_in_line(&mut img, fonts, &spec.title_line, job.labels.0, job.title.as_deref());
+    draw_write_in_line(&mut img, fonts, &spec.with_line, job.labels.1, job.with.as_deref());
 
-    let when = match (
-        DateTime::parse_from_rfc3339(&meeting.start_time),
-        DateTime::parse_from_rfc3339(&meeting.end_time),
-    ) {
-        (Ok(s), Ok(e)) => format!(
-            "{} · {}–{}",
-            s.format("%A %-d %B %Y"),
-            s.format("%H:%M"),
-            e.format("%H:%M")
-        ),
-        _ => meeting.start_time.clone(),
-    };
-    draw_text_mut(&mut img, BLACK, MARGIN as i32, 122, PxScale::from(40.0), &fonts.regular, &when);
-
-    let mut meta = Vec::new();
-    if let Some(s) = &meeting.series_title {
-        if s != &meeting.title {
-            meta.push(s.clone());
-        }
-    }
-    if let Some(a) = &meeting.area {
-        meta.push(a.clone());
-    }
-    if !meta.is_empty() {
+    if let Some(a) = &job.area {
+        let scale = PxScale::from(30.0);
+        let w = text_width(&fonts.regular, scale, a);
         draw_text_mut(
             &mut img,
             GRAY,
-            MARGIN as i32,
-            180,
-            PxScale::from(34.0),
+            (PAGE_W - MARGIN) as i32 - w.ceil() as i32,
+            36,
+            scale,
             &fonts.regular,
-            &meta.join("  ·  "),
+            a,
         );
     }
+
     // Header rule.
     draw_filled_rect_mut(
         &mut img,
@@ -115,8 +156,8 @@ pub fn render_template(meeting: &MeetingTemplateData, fonts: &Fonts) -> Result<G
     // ---- Carried-over strip ----------------------------------------------
     let row_scale = PxScale::from(38.0);
     let id_scale = PxScale::from(28.0);
-    for (row, carried) in spec.carried_rows.iter().zip(&meeting.carried) {
-        // Tick-box.
+    for (row, carried) in spec.carried_rows.iter().zip(job.carried) {
+        // Tick-box (double stroke so it survives e-ink rendering).
         draw_hollow_rect_mut(
             &mut img,
             Rect::at(row.tickbox.x as i32, row.tickbox.y as i32)
@@ -168,8 +209,8 @@ pub fn render_template(meeting: &MeetingTemplateData, fonts: &Fonts) -> Result<G
         draw_text_mut(&mut img, BLACK, text_x, text_y, row_scale, &fonts.regular, &line);
     }
 
-    if meeting.carried.len() > MAX_CARRIED {
-        let extra = meeting.carried.len() - MAX_CARRIED;
+    if job.carried.len() > MAX_CARRIED {
+        let extra = job.carried.len() - MAX_CARRIED;
         draw_text_mut(
             &mut img,
             GRAY,
@@ -196,57 +237,67 @@ pub fn render_template(meeting: &MeetingTemplateData, fonts: &Fonts) -> Result<G
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CarriedAction;
 
-    /// Renders a representative template. Needs fonts: set SUPERNOTE_FONT_DIR
-    /// (e.g. a liberation_ttf truetype dir); skipped otherwise.
+    fn fonts() -> Option<Fonts> {
+        let dir = std::env::var("SUPERNOTE_FONT_DIR").ok()?;
+        Fonts::load(Path::new(&dir), "LiberationSans").ok()
+    }
+
     #[test]
-    fn renders_sample_template() {
-        let Ok(dir) = std::env::var("SUPERNOTE_FONT_DIR") else {
+    fn renders_series_template() {
+        let Some(fonts) = fonts() else {
             eprintln!("SUPERNOTE_FONT_DIR unset; skipping render test");
             return;
         };
-        let fonts = Fonts::load(Path::new(&dir), "LiberationSans").unwrap();
-        let meeting = MeetingTemplateData {
-            meeting_id: 1,
-            title: "Platform / Infra weekly sync".into(),
-            series_title: Some("Infra weekly".into()),
+        let carried = vec![
+            CarriedAction {
+                action_id: 42,
+                text: "Draft capacity plan for Q4 GPU fleet expansion".into(),
+                priority: 2,
+                due_date: Some("2026-07-30".into()),
+                delegated_to: Some("Alice Chen".into()),
+                owed_to: None,
+                raise_with: None,
+            },
+            CarriedAction {
+                action_id: 57,
+                text: "Review incident postmortem".into(),
+                priority: 0,
+                due_date: None,
+                delegated_to: None,
+                owed_to: Some("VP Eng".into()),
+                raise_with: Some("Bob Kowalski".into()),
+            },
+        ];
+        let job = TemplateJob {
+            labels: ("Meeting:", "With:"),
+            title: Some("1:1 Priya".into()),
+            with: Some("Priya Natarajan".into()),
             area: Some("Infrastructure".into()),
-            start_time: "2026-07-20T15:00:00+00:00".into(),
-            end_time: "2026-07-20T16:00:00+00:00".into(),
-            carried: vec![
-                CarriedAction {
-                    action_id: 42,
-                    text: "Draft capacity plan for Q4 GPU fleet expansion".into(),
-                    priority: 2,
-                    due_date: Some("2026-07-30".into()),
-                    delegated_to: Some("Alice Chen".into()),
-                    owed_to: None,
-                    raise_with: None,
-                },
-                CarriedAction {
-                    action_id: 57,
-                    text: "Review incident postmortem".into(),
-                    priority: 0,
-                    due_date: None,
-                    delegated_to: None,
-                    owed_to: Some("VP Eng".into()),
-                    raise_with: Some("Bob Kowalski".into()),
-                },
-                CarriedAction {
-                    action_id: 63,
-                    text: "A very long action item text that should be truncated because it exceeds the row width by a large margin and keeps going and going".into(),
-                    priority: 1,
-                    due_date: None,
-                    delegated_to: None,
-                    owed_to: None,
-                    raise_with: None,
-                },
-            ],
+            carried: &carried,
         };
-        let img = render_template(&meeting, &fonts).unwrap();
+        let img = render_template(&job, &fonts).unwrap();
         assert_eq!((img.width(), img.height()), (PAGE_W, PAGE_H));
         if let Ok(out) = std::env::var("SUPERNOTE_TEST_OUT") {
+            img.save(out).unwrap();
+        }
+    }
+
+    #[test]
+    fn renders_adhoc_template() {
+        let Some(fonts) = fonts() else {
+            return;
+        };
+        let job = TemplateJob {
+            labels: ("Title:", "By:"),
+            title: None,
+            with: None,
+            area: None,
+            carried: &[],
+        };
+        let img = render_template(&job, &fonts).unwrap();
+        assert_eq!((img.width(), img.height()), (PAGE_W, PAGE_H));
+        if let Ok(out) = std::env::var("SUPERNOTE_TEST_OUT_ADHOC") {
             img.save(out).unwrap();
         }
     }
