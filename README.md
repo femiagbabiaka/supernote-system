@@ -58,6 +58,10 @@ This runs four units: `supernote-gdrive` (rclone mount of the Drive tree),
 
 ## One-time setup
 
+**New here? Follow [docs/onboarding.md](docs/onboarding.md)** — the full
+walkthrough from bare device to first reviewed meeting, with verification at
+each step and troubleshooting. The summary version:
+
 1. **rclone**: `rclone config` a Drive remote scoped to the folder the
    Supernote syncs to; copy the resulting config to
    `/var/lib/supernote/rclone.conf` (owner `supernote`, mode 600). A personal
