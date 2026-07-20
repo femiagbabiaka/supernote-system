@@ -163,6 +163,10 @@ in
       wants = [ "network-online.target" ];
       after = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
+      # Put the setuid fusermount3 wrapper first on PATH. The nixpkgs rclone
+      # wrapper *appends* its own (non-setuid) fuse3 to PATH, which otherwise
+      # wins and fails to mount as a non-root user (EPERM).
+      path = [ "/run/wrappers" ];
       serviceConfig = {
         Type = "notify";
         User = "supernote";
