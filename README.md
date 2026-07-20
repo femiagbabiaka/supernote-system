@@ -71,18 +71,15 @@ This runs four units: `supernote-gdrive` (rclone mount of the Drive tree),
    template as the page background (templates appear under My Styles after a
    sync).
 4. **Seed people, areas, and standing meetings** — this is what makes
-   name/area resolution and routing work:
+   name/area resolution and routing work. Copy `seed.example.toml`, edit it,
+   and apply:
    ```sh
-   curl -X POST localhost:8130/api/areas -H 'content-type: application/json' \
-     -d '{"name":"Infrastructure","aliases":"infra"}'
-   curl -X POST localhost:8130/api/people -H 'content-type: application/json' \
-     -d '{"name":"Priya Natarajan","aliases":"PN,priya","area_id":1}'
-   curl -X POST localhost:8130/api/series -H 'content-type: application/json' \
-     -d '{"title":"1:1 Priya","is_one_on_one":true,"person_id":1,"area_id":1}'
-   curl -X POST localhost:8130/api/series -H 'content-type: application/json' \
-     -d '{"title":"Infra weekly","area_id":1,"attendee_ids":[1]}'
+   supernote-seed seed.toml   # the module puts the binary on PATH
    ```
-   Then run the templater once (or wait for the timer) and sync the device.
+   Re-running is safe: entries are upserted by name/title, so keep the file
+   (e.g. next to your secrets) and re-apply it whenever your org or meeting
+   cadence changes. Then run the templater once (or wait for the timer) and
+   sync the device.
 
 ## Handwriting grammar
 

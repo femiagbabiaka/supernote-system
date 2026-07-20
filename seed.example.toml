@@ -1,0 +1,45 @@
+# Seed file for supernote-seed: areas, people, and standing meeting series.
+# Apply with:  supernote-seed seed.toml
+# Re-running is safe — entries are upserted by name/title, so keep this file
+# around and re-apply it when your org or meeting cadence changes.
+
+[[areas]]
+name = "Infrastructure"
+aliases = "infra"
+
+[[areas]]
+name = "Platform"
+aliases = "plat"
+
+# aliases: initials, nicknames, and common misreadings of your handwriting —
+# these are what the transcriber resolves against, so be generous.
+[[people]]
+name = "Priya Natarajan"
+aliases = "PN, priya"
+area = "Infrastructure"
+
+[[people]]
+name = "Bob Kowalski"
+aliases = "BK, bobby"
+area = "Platform"
+
+[[people]]
+name = "Dana Whitfield"
+aliases = "DW, dana"
+
+# 1:1s: one_on_one names the counterpart; the template pre-fills "With:".
+[[series]]
+title = "1:1 Priya"
+one_on_one = "Priya Natarajan"
+area = "Infrastructure"
+
+[[series]]
+title = "1:1 Dana (VP)"
+one_on_one = "Dana Whitfield"
+
+# Group series: attendees drive action routing (an item @Bob shows up on the
+# next meeting of any series Bob regularly attends).
+[[series]]
+title = "Infra weekly"
+area = "Infrastructure"
+attendees = ["Priya Natarajan", "Bob Kowalski"]

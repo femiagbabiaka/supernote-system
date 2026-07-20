@@ -139,6 +139,9 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # CLI access to supernote-seed (and the other binaries) on the host.
+    environment.systemPackages = [ pkg ];
+
     users.users.supernote = {
       isSystemUser = true;
       group = "supernote";

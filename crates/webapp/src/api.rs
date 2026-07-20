@@ -39,13 +39,19 @@ pub async fn list_series(
         .map_err(|e| internal_error(e.into()))
 }
 
+/// Create-or-update by title, so seeding is re-runnable. Template bookkeeping
+/// (template_path/carried_ids) is preserved on update.
 pub async fn create_series(
     State(state): State<Arc<AppState>>,
     Json(s): Json<NewSeries>,
 ) -> Result<Json<MeetingSeries>, (StatusCode, String)> {
     sqlx::query_as(
         "INSERT INTO meeting_series (title, area_id, is_one_on_one, person_id, attendee_ids) \
-         VALUES (?, ?, ?, ?, ?) RETURNING *",
+         VALUES (?, ?, ?, ?, ?) \
+         ON CONFLICT (title) DO UPDATE SET \
+           area_id = excluded.area_id, is_one_on_one = excluded.is_one_on_one, \
+           person_id = excluded.person_id, attendee_ids = excluded.attendee_ids \
+         RETURNING *",
     )
     .bind(&s.title)
     .bind(s.area_id)
@@ -195,12 +201,16 @@ pub async fn list_people(
         .map_err(|e| internal_error(e.into()))
 }
 
+/// Create-or-update by name, so seeding is re-runnable.
 pub async fn create_person(
     State(state): State<Arc<AppState>>,
     Json(p): Json<NewPerson>,
 ) -> Result<Json<Person>, (StatusCode, String)> {
     sqlx::query_as(
-        "INSERT INTO people (name, aliases, email, area_id) VALUES (?, ?, ?, ?) RETURNING *",
+        "INSERT INTO people (name, aliases, email, area_id) VALUES (?, ?, ?, ?) \
+         ON CONFLICT (name) DO UPDATE SET \
+           aliases = excluded.aliases, email = excluded.email, area_id = excluded.area_id \
+         RETURNING *",
     )
     .bind(&p.name)
     .bind(&p.aliases)
@@ -229,15 +239,20 @@ pub async fn list_areas(
         .map_err(|e| internal_error(e.into()))
 }
 
+/// Create-or-update by name, so seeding is re-runnable.
 pub async fn create_area(
     State(state): State<Arc<AppState>>,
     Json(a): Json<NewArea>,
 ) -> Result<Json<Area>, (StatusCode, String)> {
-    sqlx::query_as("INSERT INTO areas (name, aliases) VALUES (?, ?) RETURNING *")
-        .bind(&a.name)
-        .bind(&a.aliases)
-        .fetch_one(&state.pool)
-        .await
-        .map(Json)
-        .map_err(|e| internal_error(e.into()))
+    sqlx::query_as(
+        "INSERT INTO areas (name, aliases) VALUES (?, ?) \
+         ON CONFLICT (name) DO UPDATE SET aliases = excluded.aliases \
+         RETURNING *",
+    )
+    .bind(&a.name)
+    .bind(&a.aliases)
+    .fetch_one(&state.pool)
+    .await
+    .map(Json)
+    .map_err(|e| internal_error(e.into()))
 }
