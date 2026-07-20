@@ -40,55 +40,57 @@
     {% endif %}
 
     <h3>Items</h3>
-    <table>
-      <tr><th>Text</th><th>Kind</th><th>→ delegate</th><th>◎ owed</th><th>@ raise</th>
-          <th>!</th><th>Due</th><th>Drop</th></tr>
-      {% for it in items %}
-      <tr>
-        <td>
-          <input type="text" name="item.{{ it.index }}.text" value="{{ it.text }}">
-          {% if !it.unresolved.is_empty() %}
-          <div class="warn">unresolved name: {{ it.unresolved }}</div>
-          {% endif %}
-        </td>
-        <td>
+    {% for it in items %}
+    <div class="item">
+      <input class="item-text" type="text" name="item.{{ it.index }}.text" value="{{ it.text }}">
+      {% if !it.unresolved.is_empty() %}
+      <div class="warn">unresolved name: {{ it.unresolved }}</div>
+      {% endif %}
+      <div class="item-controls">
+        <label>kind
           <select name="item.{{ it.index }}.kind">
             {% for k in kinds %}
             <option value="{{ k }}" {% if it.kind.as_str() == k.as_str() %}selected{% endif %}>{{ k }}</option>
             {% endfor %}
           </select>
-        </td>
-        <td>
+        </label>
+        <label>→ delegate
           <select name="item.{{ it.index }}.delegated_to">
             <option value="0"></option>
             {% for p in people %}
             <option value="{{ p.id }}" {% if it.delegated_to == p.id %}selected{% endif %}>{{ p.name }}</option>
             {% endfor %}
           </select>
-        </td>
-        <td>
+        </label>
+        <label>◎ owed
           <select name="item.{{ it.index }}.owed_to">
             <option value="0"></option>
             {% for p in people %}
             <option value="{{ p.id }}" {% if it.owed_to == p.id %}selected{% endif %}>{{ p.name }}</option>
             {% endfor %}
           </select>
-        </td>
-        <td>
+        </label>
+        <label>@ raise
           <select name="item.{{ it.index }}.raise_with">
             <option value="0"></option>
             {% for p in people %}
             <option value="{{ p.id }}" {% if it.raise_with == p.id %}selected{% endif %}>{{ p.name }}</option>
             {% endfor %}
           </select>
-        </td>
-        <td><input type="number" name="item.{{ it.index }}.priority" value="{{ it.priority }}"
-                   min="0" max="3" style="width:3.2em"></td>
-        <td><input type="date" name="item.{{ it.index }}.due_date" value="{{ it.due_date }}"></td>
-        <td><input type="checkbox" name="item.{{ it.index }}.delete"></td>
-      </tr>
-      {% endfor %}
-    </table>
+        </label>
+        <label>priority
+          <input type="number" name="item.{{ it.index }}.priority" value="{{ it.priority }}"
+                 min="0" max="3" style="width:3.2em">
+        </label>
+        <label>due
+          <input type="date" name="item.{{ it.index }}.due_date" value="{{ it.due_date }}">
+        </label>
+        <label>drop
+          <input type="checkbox" name="item.{{ it.index }}.delete">
+        </label>
+      </div>
+    </div>
+    {% endfor %}
     <p><button type="submit">Save</button></p>
   </form>
 </div>
